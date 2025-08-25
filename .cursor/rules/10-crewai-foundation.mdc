@@ -1,0 +1,29 @@
+---
+description: CrewAI project foundation — agents, tasks, tools, chains, config hygiene, and run scripts
+---
+
+# CREWAI FOUNDATION
+
+When you detect a CrewAI-style project (Python or JS/TS), ensure:
+
+- **Project Scaffolding**
+  - `agents/`, `tasks/`, `tools/`, `chains/`, `configs/`, `scripts/`
+  - `scripts/run_dev.sh` (or .ps1 on Windows) to start the crew locally.
+  - `.env.example` with all required keys; never commit real secrets.
+
+- **Config Hygiene**
+  - Centralize model + temperature + timeouts; no hard-coded keys.
+  - Provide sensible defaults; read from env; fail with clear error if missing.
+
+- **Agent Contracts**
+  - Each agent has: role, goals, constraints, I/O schema (pydantic or TS types).
+  - Add inline examples of expected inputs/outputs.
+
+- **Orchestration**
+  - Document the flow in ARCH.md (sequence diagram or list).
+  - Add a smoke test (see testing rule) to validate the orchestrated path.
+
+- **Recovery**
+  - If a step fails, log to DECISIONS.log with suggested retry plan.
+
+When creating/editing CrewAI files, reference and update PLAN.md and ARCH.md accordingly.

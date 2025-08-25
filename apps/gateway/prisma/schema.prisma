@@ -1,0 +1,471 @@
+// Created automatically by Cursor AI (2024-12-19)
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// TENANCY & USERS
+// =============================================================================
+
+model Org {
+  id        String   @id @default(cuid())
+  name      String
+  plan      String?  @default("free")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users       User[]
+  memberships Membership[]
+  matters     Matter[]
+  libraryClauses LibraryClause[]
+  playbooks   Playbook[]
+  integrations Integration[]
+  auditLogs   AuditLog[]
+  costs       Cost[]
+
+  @@map("orgs")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  orgId      String   @map("org_id")
+  email      String   @unique
+  name       String?
+  role       String?
+  mfaEnabled Boolean  @default(false) @map("mfa_enabled")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  org         Org          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  memberships Membership[]
+  matters     Matter[]
+  agreements  Agreement[]
+  comments    Comment[]
+  approvals   Approval[]
+  obligations Obligation[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+model Membership {
+  userId        String @map("user_id")
+  orgId         String @map("org_id")
+  workspaceRole String @map("workspace_role") // owner, admin, counsel, deal_desk, privacy, security, finance, viewer
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Org  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@id([userId, orgId])
+  @@map("memberships")
+}
+
+// =============================================================================
+// MATTERS & AGREEMENTS
+// =============================================================================
+
+model Matter {
+  id            String   @id @default(cuid())
+  orgId         String   @map("org_id")
+  name          String
+  counterparty  String?
+  region        String?
+  valueUsd      Decimal? @map("value_usd") @db.Decimal(15, 2)
+  stage         String?
+  createdBy     String   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  org        Org         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [createdBy], references: [id])
+  agreements Agreement[]
+  threads    Thread[]
+
+  @@map("matters")
+}
+
+model Agreement {
+  id            String   @id @default(cuid())
+  matterId      String   @map("matter_id")
+  type          String?
+  subtype       String?
+  status        String   @default("created") // created, ingesting, classifying, matching, redlining, reviewing, approving, signing, executed, obligations, archived
+  effectiveDate DateTime? @map("effective_date")
+  termMonths    Int?     @map("term_months")
+  autoRenew     Boolean? @map("auto_renew")
+  governingLaw  String?  @map("governing_law")
+  currency      String?
+  createdBy     String   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  matter           Matter              @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  user             User                @relation(fields: [createdBy], references: [id])
+  files            File[]
+  versions         AgreementVersion[]
+  redlines         Redline[]
+  comments         Comment[]
+  approvals        Approval[]
+  riskReports      RiskReport[]
+  obligations      Obligation[]
+  signatures       Signature[]
+  costs            Cost[]
+
+  @@map("agreements")
+}
+
+model File {
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  matterId     String?  @map("matter_id")
+  agreementId  String?  @map("agreement_id")
+  name         String
+  mime         String
+  sizeBytes    BigInt  @map("size_bytes")
+  s3Key        String  @map("s3_key")
+  sha256       String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  matter    Matter?    @relation(fields: [matterId], references: [id])
+  agreement Agreement? @relation(fields: [agreementId], references: [id])
+
+  @@map("files")
+}
+
+// =============================================================================
+// VERSIONS, SECTIONS, CLAUSES
+// =============================================================================
+
+model AgreementVersion {
+  id        String   @id @default(cuid())
+  agreementId String @map("agreement_id")
+  version   Int
+  source    String   // counterparty, company, system
+  notes     String?
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agreement     Agreement      @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [createdBy], references: [id])
+  sections      Section[]
+  clauseMatches ClauseMatch[]
+  redlines      Redline[]
+  comments      Comment[]
+  riskReports   RiskReport[]
+
+  @@map("agreement_versions")
+}
+
+model Section {
+  id                  String   @id @default(cuid())
+  agreementVersionId  String   @map("agreement_version_id")
+  heading             String?
+  number              String?
+  text                String
+  pageFrom            Int?     @map("page_from")
+  pageTo              Int?     @map("page_to")
+  orderIdx            Int      @map("order_idx")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agreementVersion AgreementVersion @relation(fields: [agreementVersionId], references: [id], onDelete: Cascade)
+  clauseMatches    ClauseMatch[]
+  comments         Comment[]
+  obligations      Obligation[]
+
+  @@map("sections")
+}
+
+model ClauseMatch {
+  id                  BigInt   @id @default(autoincrement())
+  agreementVersionId  String   @map("agreement_version_id")
+  sectionId           String   @map("section_id")
+  libraryClauseId     String?  @map("library_clause_id")
+  confidence          Decimal? @db.Decimal(5, 4)
+  coverage            Decimal? @db.Decimal(5, 4)
+  position            String?  // preferred, fallback, unacceptable
+  rationale           String?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agreementVersion AgreementVersion @relation(fields: [agreementVersionId], references: [id], onDelete: Cascade)
+  section          Section          @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  libraryClause    LibraryClause?   @relation(fields: [libraryClauseId], references: [id])
+
+  @@map("clause_matches")
+}
+
+// =============================================================================
+// LIBRARY & PLAYBOOKS
+// =============================================================================
+
+model LibraryClause {
+  id           String   @id @default(cuid())
+  orgId        String   @map("org_id")
+  name         String
+  category     String
+  text         String
+  jurisdiction String?
+  versions     Json?
+  embedding    Unsupported("vector(1536)")?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  org           Org            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  clauseMatches ClauseMatch[]
+  playbookPositions PlaybookPosition[]
+
+  @@map("library_clauses")
+}
+
+model Playbook {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  name      String
+  scope     Json?    // by type/jurisdiction/value bands
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  org       Org               @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  positions PlaybookPosition[]
+
+  @@map("playbooks")
+}
+
+model PlaybookPosition {
+  id             String   @id @default(cuid())
+  playbookId     String   @map("playbook_id")
+  clauseCategory String   @map("clause_category")
+  preferred      String?
+  fallback       String?
+  unacceptable   String?
+  riskWeights    Json?    @map("risk_weights")
+  rationale      String?
+  overrides      Json?    // per jurisdiction/value
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  playbook      Playbook       @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+  libraryClause LibraryClause? @relation(fields: [clauseCategory], references: [category])
+
+  @@map("playbook_positions")
+}
+
+// =============================================================================
+// REDLINES, COMMENTS, APPROVALS
+// =============================================================================
+
+model Redline {
+  id                  String   @id @default(cuid())
+  agreementVersionId  String   @map("agreement_version_id")
+  changeSet           Json     @map("change_set") // normalized track changes
+  docxKey             String?  @map("docx_key")
+  pdfKey              String?  @map("pdf_key")
+  summary             String?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agreementVersion AgreementVersion @relation(fields: [agreementVersionId], references: [id], onDelete: Cascade)
+
+  @@map("redlines")
+}
+
+model Comment {
+  id                  String   @id @default(cuid())
+  agreementVersionId  String   @map("agreement_version_id")
+  sectionId           String?  @map("section_id")
+  authorId            String   @map("author_id")
+  body                String
+  anchor              Int?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agreementVersion AgreementVersion @relation(fields: [agreementVersionId], references: [id], onDelete: Cascade)
+  section          Section?         @relation(fields: [sectionId], references: [id])
+  user             User             @relation(fields: [authorId], references: [id])
+
+  @@map("comments")
+}
+
+model Approval {
+  id          String    @id @default(cuid())
+  agreementId String    @map("agreement_id")
+  role        String
+  assignees   String[]  // array of user IDs
+  dueAt       DateTime? @map("due_at")
+  status      String    @default("pending") // pending, approved, rejected, expired
+  decisionBy  String?   @map("decision_by")
+  decisionAt  DateTime? @map("decision_at")
+  comment     String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  agreement Agreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [decisionBy], references: [id])
+
+  @@map("approvals")
+}
+
+// =============================================================================
+// RISK & OBLIGATIONS
+// =============================================================================
+
+model RiskReport {
+  id                  String   @id @default(cuid())
+  agreementVersionId  String   @map("agreement_version_id")
+  totalScore          Decimal? @map("total_score") @db.Decimal(5, 4)
+  breakdown           Json?    // category breakdown
+  exceptions          Json?    // exception list
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agreementVersion AgreementVersion @relation(fields: [agreementVersionId], references: [id], onDelete: Cascade)
+
+  @@map("risk_reports")
+}
+
+model Obligation {
+  id               String    @id @default(cuid())
+  agreementId      String    @map("agreement_id")
+  name             String
+  owner            String?   // user ID
+  dueAt            DateTime? @map("due_at")
+  sourceSectionId  String?   @map("source_section_id")
+  frequency        String?
+  status           String    @default("open") // open, done, snoozed, cancelled
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  agreement Agreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  section   Section?  @relation(fields: [sourceSectionId], references: [id])
+
+  @@map("obligations")
+}
+
+// =============================================================================
+// EMAIL & SIGNATURE
+// =============================================================================
+
+model Thread {
+  id                String   @id @default(cuid())
+  matterId          String   @map("matter_id")
+  counterpartyEmail String?  @map("counterparty_email")
+  subject           String?
+  stance            Json?    // stance analysis
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relations
+  matter    Matter     @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@map("threads")
+}
+
+model Message {
+  id        BigInt   @id @default(autoincrement())
+  threadId  String   @map("thread_id")
+  sender    String
+  body      String
+  ts        DateTime @default(now())
+
+  // Relations
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model Signature {
+  id           String    @id @default(cuid())
+  agreementId  String    @map("agreement_id")
+  provider     String
+  envelopeId   String?   @map("envelope_id")
+  status       String
+  recipients   Json?     // recipient configuration
+  sentAt       DateTime? @map("sent_at")
+  completedAt  DateTime? @map("completed_at")
+  files        Json?     // signed files metadata
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  agreement Agreement @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+
+  @@map("signatures")
+}
+
+// =============================================================================
+// AUDIT, INTEGRATIONS, COSTS
+// =============================================================================
+
+model Integration {
+  id           String    @id @default(cuid())
+  orgId        String    @map("org_id")
+  provider     String
+  scopes       String[]
+  accessToken  String?   @map("access_token")
+  refreshToken String?   @map("refresh_token")
+  expiresAt    DateTime? @map("expires_at")
+  meta         Json?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  org Org @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("integrations")
+}
+
+model AuditLog {
+  id           BigInt   @id @default(autoincrement())
+  orgId        String   @map("org_id")
+  userId       String?  @map("user_id")
+  matterId     String?  @map("matter_id")
+  agreementId  String?  @map("agreement_id")
+  action       String
+  target       String
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User?      @relation(fields: [userId], references: [id])
+  matter    Matter?    @relation(fields: [matterId], references: [id])
+  agreement Agreement? @relation(fields: [agreementId], references: [id])
+
+  @@map("audit_log")
+}
+
+model Cost {
+  id           BigInt   @id @default(autoincrement())
+  orgId        String   @map("org_id")
+  agreementId  String?  @map("agreement_id")
+  provider     String
+  resource     String
+  qty          Decimal  @db.Decimal(10, 4)
+  usd          Decimal  @db.Decimal(10, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  org       Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  agreement Agreement? @relation(fields: [agreementId], references: [id])
+
+  @@map("costs")
+}
